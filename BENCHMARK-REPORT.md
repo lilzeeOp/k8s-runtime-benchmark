@@ -58,6 +58,33 @@ Built with [Django](https://www.djangoproject.com/), the most popular Python web
 
 ---
 
+## Cold Start — Spin-Up Time
+
+How fast can each runtime go from "pod scheduled" to "serving requests"?
+
+### K8s Pod Readiness (Scheduled → Ready)
+
+Scaled each deployment from 0 to 1, readiness probe set to 0s initial delay with 1s check period:
+
+| | Rust | Go | Django |
+|--|------|-----|--------|
+| Time to Ready | **2s** | **2s** | **4s** |
+
+These numbers include K8s scheduling and container creation overhead (roughly the same for all three). The difference is what happens after the container starts:
+
+- **Rust:** Executes a single compiled binary. No runtime to boot, no interpreter, no GC. The process binds to the port in microseconds.
+- **Go:** Also a single compiled binary. Slightly more startup work (initializing the goroutine scheduler and GC) but still in low milliseconds.
+- **Django:** Has to start the Python interpreter → import Django framework → import all application modules → spawn 4 Gunicorn worker processes → each worker loads the full app. That's a multi-second boot sequence.
+
+**Why this matters on K8s:**
+
+- **HPA scale-up:** When traffic spikes, new pods need to be ready fast. Rust/Go are serving within 2 seconds. Django takes 4+ seconds — and in production with real dependencies (database connections, cache warmup, config loading, migration checks), this stretches to **10-15 seconds**. That's 10-15 seconds of degraded service during a spike.
+- **Rolling updates:** Faster startup = faster deployments. Rust/Go can cycle through all pods quickly. Django deployments are slower because each new pod waits for the full boot.
+- **Crash recovery:** When a pod dies, Rust/Go replacements are ready almost instantly. Django leaves a gap while Python boots up — our pod kill test (Test 6) showed Go recovering in 3s vs Django in 8s.
+- **Warm spare cost:** Slow startups mean you need idle "warm spare" pods sitting ready just in case of traffic spikes. That's wasted money. Rust/Go don't need warm spares because new pods are ready before users notice.
+
+---
+
 ## Test 1: Image Size and Memory Footprint
 
 | Metric | Rust | Go | Django |
@@ -238,6 +265,7 @@ For a production service handling 100 requests/second:
 
 | Test | Rust | Go | Django |
 |------|------|-----|--------|
+| K8s pod readiness | **2s** | **2s** | 4s |
 | Image size | **13.5 MB** | 18.6 MB | 252 MB |
 | Memory (idle) | **~0 Mi** | 1 Mi | 120 Mi |
 | Compute 500K primes | **19.5ms** | 27.9ms | 841ms |
