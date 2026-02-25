@@ -12,11 +12,14 @@ import (
 var version = "v1"
 
 func main() {
+	bootStart := time.Now()
+
 	http.HandleFunc("/health", healthHandler)
 	http.HandleFunc("/compute", computeHandler)
 	http.HandleFunc("/payload", payloadHandler)
 
-	fmt.Printf("go-bench %s listening on :8080\n", version)
+	startupUs := time.Since(bootStart).Microseconds()
+	fmt.Printf("go-bench %s listening on :8080 (startup: %dus / %.3fms)\n", version, startupUs, float64(startupUs)/1000.0)
 	if err := http.ListenAndServe(":8080", nil); err != nil {
 		fmt.Printf("server error: %v\n", err)
 	}

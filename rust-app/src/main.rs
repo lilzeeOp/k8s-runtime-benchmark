@@ -6,13 +6,16 @@ const VERSION: &str = env!("APP_VERSION");
 
 #[tokio::main]
 async fn main() {
+    let boot_start = Instant::now();
+
     let app = Router::new()
         .route("/health", get(health))
         .route("/compute", get(compute))
         .route("/payload", get(payload));
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
-    println!("rust-bench {} listening on :8080", VERSION);
+    let startup_us = boot_start.elapsed().as_micros();
+    println!("rust-bench {} listening on :8080 (startup: {}us / {:.3}ms)", VERSION, startup_us, startup_us as f64 / 1000.0);
     axum::serve(listener, app).await.unwrap();
 }
 
