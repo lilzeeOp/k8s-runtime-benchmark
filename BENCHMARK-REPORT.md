@@ -15,7 +15,35 @@ We built three apps that do the **exact same thing** — a simple HTTP server wi
 - **`/compute?n=50000`** — counts prime numbers up to N (CPU-intensive work simulating real computation)
 - **`/payload?size=1000`** — returns a JSON array of N objects (tests serialization and network throughput)
 
-All three apps use the **same prime-counting algorithm** and **same payload generation logic**. The only difference is the language and runtime:
+All three apps use the **same prime-counting algorithm** and **same payload generation logic**. The only difference is the language and runtime.
+
+This makes it a **fair 3-way comparison** where the only variable is the language runtime.
+
+---
+
+## The Three Apps
+
+### Rust App — Axum (async)
+
+Built with [Axum](https://github.com/tokio-rs/axum), a modern async web framework built on top of Tokio. Rust compiles to a single native binary with no runtime, no garbage collector, and no interpreter. We enabled LTO (Link-Time Optimization) and symbol stripping in the release build, which is why the final binary is so small. The Docker image uses a multi-stage build: compile in `rust:1.77-alpine`, copy just the binary into a bare `alpine:3.19` image. Final image: **13.5 MB**. The app starts in microseconds — there's nothing to boot.
+
+### Go App — Standard Library (net/http)
+
+Built with Go's built-in `net/http` package — no external framework needed. Go compiles to a single static binary with a built-in garbage collector and goroutine scheduler. It's fast to compile (~2 seconds) and fast to start. The Docker image also uses multi-stage: compile in `golang:1.22-alpine`, copy the binary into `alpine:3.19`. Final image: **18.6 MB**. Slightly larger than Rust because Go's runtime (GC, scheduler) is embedded in every binary.
+
+### Django App — Django 5.0 + Gunicorn
+
+Built with [Django](https://www.djangoproject.com/), the most popular Python web framework, served by [Gunicorn](https://gunicorn.org/) (a production WSGI server) with 4 worker processes. Unlike Rust and Go, Django doesn't compile — it runs on the Python interpreter at runtime. The Docker image is based on `python:3.12-slim` and includes the entire Python runtime, pip packages, and Django framework. Final image: **252 MB**. Each Gunicorn worker is a separate Python process, which is why memory usage is high even at idle.
+
+### Why These Three?
+
+- **Rust** represents the "best possible" — maximum performance, minimum footprint. Takashi called it "true K8s-native."
+- **Go** represents the practical sweet spot — nearly as fast as Rust, but simpler to write and faster to build. Most K8s tooling (kubectl, Docker, Prometheus) is written in Go.
+- **Django/Python** represents the "heavy runtime" category — interpreted language, large runtime, high memory baseline. We chose Django specifically because it's one of the most widely used web frameworks.
+
+---
+
+## Test Configuration
 
 | | Rust App | Go App | Django App |
 |--|----------|--------|------------|
@@ -27,8 +55,6 @@ All three apps use the **same prime-counting algorithm** and **same payload gene
 | **Starting replicas** | 2 | 2 | 2 (same) |
 | **HPA rule** | Scale at 50% CPU, max 10 | Scale at 50% CPU, max 10 | Scale at 50% CPU, max 10 (same) |
 | **NodePort** | localhost:30082 | localhost:30080 | localhost:30081 |
-
-This makes it a **fair 3-way comparison** where the only variable is the language runtime.
 
 ---
 
@@ -229,6 +255,16 @@ For a production service handling 100 requests/second:
 2. **Go** — Extremely close to Rust in real-world K8s performance. Faster builds, simpler language, massive ecosystem. The sweet spot of performance and productivity for most teams.
 
 3. **Django/Python** — 15-305x slower for CPU work. Uses 120x more memory. Maxes out HPA under moderate load. Crashes pods under spike and squeeze tests. Fine for prototyping and I/O-bound work, but pays a heavy tax on K8s.
+
+### What About Java and .NET?
+
+Takashi mentioned that Java and .NET are also "terrible on K8s" — and the data from our tests explains why that would be true, even though we didn't test them directly.
+
+**Java (Spring Boot / JVM):** The JVM needs to boot, load classes, and JIT-compile before it reaches peak performance. A typical Spring Boot container image is 300-400 MB. Idle memory is 150-300 Mi per pod (the JVM reserves heap upfront). Cold start takes 5-15 seconds. On K8s, this means slow HPA scale-up, slow rolling updates, and high base resource cost — similar problems to Django but with even more memory overhead. The JVM eventually gets fast after warmup, but K8s pods are ephemeral — they get created, killed, and replaced constantly, so the JVM never fully warms up.
+
+**.NET (ASP.NET Core):** Better than Java on startup (~2-3 seconds) and lighter on memory (~80-150 Mi), but still carries the .NET runtime in every container (200+ MB images). It would land somewhere between Go and Django in most of our tests — faster than Python, but nowhere near Rust or Go in resource efficiency.
+
+**The pattern is clear:** Runtimes that need interpreters, VMs, or large frameworks (Python, Java, .NET) pay a "K8s tax" — bigger images, slower starts, more memory, more pods needed. Compiled-to-native languages (Rust, Go) avoid this entirely. In a microservices world with dozens of services constantly scaling, that tax adds up fast.
 
 ---
 
