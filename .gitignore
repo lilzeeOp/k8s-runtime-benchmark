@@ -1,0 +1,21 @@
+# Rust
+rust-app/target/
+
+# Python
+django-app/__pycache__/
+django-app/**/__pycache__/
+*.pyc
+
+# Go
+go-app/go-bench
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# K6 results
+*.json
