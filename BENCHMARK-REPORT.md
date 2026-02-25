@@ -311,4 +311,21 @@ bash scripts/teardown.sh
 
 ---
 
+## A Note on the Benchmark: Is Prime Counting Too Simple?
+
+We used prime counting as the CPU workload because it isolates **pure runtime performance** — no database, no network, no disk. Same algorithm in all 3 languages, perfectly fair. But real production services don't just count primes, so how do these results translate?
+
+**Prime counting actually understates the gap.** In a real production app, you'd add:
+
+- **Database queries** — ORM overhead in Django (creating/destroying model objects per request) adds latency that compiled languages avoid
+- **Middleware chains** — Django runs every request through authentication, CORS, session handling, etc. Each layer is interpreted Python. In Rust/Go, middleware is compiled native code
+- **Memory allocation churn** — real apps create thousands of objects per request (parsing JSON bodies, building ORM querysets, rendering templates). This hammers Python's garbage collector and Go's GC far harder than simple math
+- **Serialization of complex objects** — our `/payload` test used flat JSON arrays. Real APIs serialize nested objects with relationships, which is slower in Python
+
+The one scenario where the gap **shrinks** is pure I/O-bound work — if your service mostly waits on a database or external API and does almost no computation, the language matters less. We proved this in Test 8 (JSON payload), where Django matched Go.
+
+**Bottom line:** Our benchmark is the best-case scenario for Django — a simple, stripped-down app with no database, no ORM, no middleware stack. Django still lost by 43x on CPU work, needed 5x more pods, and dropped 96% of requests under resource pressure. In a real production setup with all the extras, the gap would be even wider.
+
+---
+
 *All numbers in this report come from actual test runs on Docker Desktop Kubernetes. Nothing is estimated or synthetic. Every claim has data behind it.*
